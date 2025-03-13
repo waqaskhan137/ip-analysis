@@ -49,6 +49,29 @@ def read_log_file(file_path):
     return open(file_path, "r", errors="ignore")
 
 
+def parse_log_line(line):
+    """Parse a single log line and extract relevant information"""
+    patterns = [
+        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*sshd\[\d+\]: Failed password for.*from (\d+\.\d+\.\d+\.\d+)",
+        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*sshd\[\d+\]: Invalid user .* from (\d+\.\d+\.\d+\.\d+)",
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, line)
+        if match:
+            timestamp_str = match.group(1)
+            ip = match.group(2)
+            username_match = re.search(r"(user|for) (\w+)", line)
+            username = username_match.group(2) if username_match else "unknown"
+            return {
+                "timestamp": parse_timestamp(timestamp_str),
+                "ip": ip,
+                "username": username,
+                "log_entry": line.strip()
+            }
+    return None
+
+
 def parse_timestamp(timestamp_str):
     """Parse timestamp string into datetime object"""
     try:
@@ -78,57 +101,106 @@ def analyze_auth_log(log_file_path):
         print(f"File not found: {log_file_path}")
         return None
 
-    # Expanded patterns to match failed login attempts
-    failed_login_patterns = [
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*sshd\[\d+\]: Failed password for.*from (\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*sshd\[\d+\]: Invalid user .* from (\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*authentication failure.*rhost=(\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*FAILED su for .* by .* from (\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*PAM: Authentication failure.*from=(\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*login\[\d+\]: FAILED LOGIN.*from (\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*Failed password for invalid user .* from (\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*Connection closed by authenticating user .* (\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*maximum authentication attempts exceeded for .* from (\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*Disconnecting: Too many authentication failures.*from (\d+\.\d+\.\d+\.\d+)",
-    ]
-
     results = []
-
-    # Read the file using the appropriate method
     with read_log_file(log_file_path) as file:
         line_count = 0
         for line in file:
             line_count += 1
-
-            # Check against all patterns
-            match_found = False
-            for pattern in failed_login_patterns:
-                match = re.search(pattern, line)
-                if match:
-                    timestamp_str = match.group(1)
-                    ip = match.group(2)
-
-                    # Parse timestamp
-                    timestamp = parse_timestamp(timestamp_str)
-
-                    # Extract username if available
-                    username_match = re.search(r"(user|for) (\w+)", line)
-                    username = username_match.group(2) if username_match else "unknown"
-
-                    results.append(
-                        {
-                            "timestamp": timestamp,
-                            "ip": ip,
-                            "username": username,
-                            "log_entry": line.strip(),
-                            "source_file": os.path.basename(log_file_path),
-                            "line_number": line_count,
-                        }
-                    )
-                    match_found = True
-                    break
+            parsed = parse_log_line(line)
+            if parsed:
+                parsed["source_file"] = os.path.basename(log_file_path)
+                parsed["line_number"] = line_count
+                results.append(parsed)
 
     return results
+
+
+def get_ip_info(ip):
+    """Get geolocation information for an IP address"""
+    try:
+        reader = geoip2.database.Reader('GeoLite2-City.mmdb')
+        response = reader.city(ip)
+        return {
+            'latitude': response.location.latitude,
+            'longitude': response.location.longitude,
+            'country': response.country.name,
+            'city': response.city.name
+        }
+    except Exception as e:
+        print(f"Error getting IP info for {ip}: {e}")
+        return None
+
+
+def geolocate_ips(ip_list):
+    """Get geolocation information for a list of IP addresses"""
+    results = {}
+    for ip in ip_list:
+        info = get_ip_info(ip)
+        if info:
+            results[ip] = info
+    return results
+
+
+def plot_activity(df):
+    """Create a time series plot of failed login attempts"""
+    fig = px.line(df, x='timestamp', y='count', title='Failed Login Attempts Over Time')
+    return fig
+
+
+def create_world_map(ip_locations):
+    """Create a world map with markers for attack sources"""
+    m = folium.Map(location=[0, 0], zoom_start=2)
+    for ip, info in ip_locations.items():
+        if info.get('latitude') and info.get('longitude'):
+            folium.Marker(
+                [info['latitude'], info['longitude']],
+                popup=f"IP: {ip}<br>Country: {info.get('country', 'Unknown')}<br>City: {info.get('city', 'Unknown')}"
+            ).add_to(m)
+    return m
+
+
+def create_visualizations(df):
+    """Create all visualizations for the analysis results"""
+    # Time series plot
+    time_plot = plot_activity(df)
+    
+    # Username distribution
+    username_counts = df['username'].value_counts()
+    username_plot = px.pie(
+        values=username_counts.values,
+        names=username_counts.index,
+        title='Username Distribution in Failed Login Attempts'
+    )
+    
+    # IP geolocation
+    ip_locations = geolocate_ips(df['ip'].unique())
+    world_map = create_world_map(ip_locations)
+    
+    return {
+        'time_plot': time_plot,
+        'username_plot': username_plot,
+        'world_map': world_map
+    }
+
+
+def generate_report(df):
+    """Generate a comprehensive report of the analysis"""
+    total_attempts = len(df)
+    unique_ips = df['ip'].nunique()
+    unique_usernames = df['username'].nunique()
+    time_range = df['timestamp'].max() - df['timestamp'].min()
+    
+    visualizations = create_visualizations(df)
+    
+    return {
+        'stats': {
+            'total_attempts': total_attempts,
+            'unique_ips': unique_ips,
+            'unique_usernames': unique_usernames,
+            'time_range': time_range
+        },
+        'visualizations': visualizations
+    }
 
 
 @flask_app.route("/")
@@ -166,10 +238,17 @@ def upload_file():
         # Convert results to DataFrame
         df = pd.DataFrame(results)
 
+        # Generate report with visualizations
+        report = generate_report(df)
+
         # Store results in session
         session["analysis_results"] = df.to_dict("records")
 
-        return render_template("results.html", results=df.to_dict("records"))
+        return render_template(
+            "results.html",
+            results=df.to_dict("records"),
+            report=report
+        )
     except Exception as e:
         flash(f"Error processing file: {str(e)}", "danger")
         return render_template("index.html")
