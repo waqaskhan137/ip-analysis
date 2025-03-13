@@ -7,7 +7,7 @@ import tempfile
 import time
 from collections import Counter
 from datetime import datetime
-from io import BytesIO
+from io import BytesIO, StringIO
 
 import folium
 import geoip2.database
@@ -26,6 +26,7 @@ from flask import (
     send_file,
     session,
     url_for,
+    Response,
 )
 from werkzeug.utils import secure_filename
 
@@ -50,25 +51,26 @@ def read_log_file(file_path):
 
 
 def parse_log_line(line):
-    """Parse a single log line and extract relevant information"""
+    """Parse a single line from the auth.log file"""
+    # Common patterns for failed login attempts
     patterns = [
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*sshd\[\d+\]: Failed password for.*from (\d+\.\d+\.\d+\.\d+)",
-        r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*sshd\[\d+\]: Invalid user .* from (\d+\.\d+\.\d+\.\d+)",
+        r'(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+).*Failed password for (?:invalid user )?(?P<username>\S+) from (?P<ip>\d+\.\d+\.\d+\.\d+)',
+        r'(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+).*authentication failure.*ruser=(?P<username>\S+).*rhost=(?P<ip>\d+\.\d+\.\d+\.\d+)',
+        r'(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+).*Invalid user (?P<username>\S+) from (?P<ip>\d+\.\d+\.\d+\.\d+)',
     ]
 
     for pattern in patterns:
         match = re.search(pattern, line)
         if match:
-            timestamp_str = match.group(1)
-            ip = match.group(2)
-            username_match = re.search(r"(user|for) (\w+)", line)
-            username = username_match.group(2) if username_match else "unknown"
-            return {
-                "timestamp": parse_timestamp(timestamp_str),
-                "ip": ip,
-                "username": username,
-                "log_entry": line.strip(),
-            }
+            data = match.groupdict()
+            # Convert timestamp to datetime
+            try:
+                current_year = datetime.now().year
+                timestamp_str = f"{current_year} {data['timestamp']}"
+                data['timestamp'] = datetime.strptime(timestamp_str, "%Y %b %d %H:%M:%S")
+            except ValueError:
+                continue
+            return data
     return None
 
 
@@ -95,24 +97,35 @@ def parse_timestamp(timestamp_str):
         return datetime.now()
 
 
-def analyze_auth_log(log_file_path):
-    # Check if file exists
-    if not os.path.exists(log_file_path):
-        print(f"File not found: {log_file_path}")
+def analyze_auth_log(file_path):
+    """Analyze the auth.log file and return a DataFrame with failed login attempts"""
+    failed_attempts = []
+    
+    # Handle both regular and gzipped files
+    opener = gzip.open if file_path.endswith('.gz') else open
+    
+    try:
+        with opener(file_path, 'rt') as f:
+            for line in f:
+                parsed = parse_log_line(line)
+                if parsed:
+                    failed_attempts.append(parsed)
+    except Exception as e:
+        print(f"Error reading log file: {e}")
         return None
 
-    results = []
-    with read_log_file(log_file_path) as file:
-        line_count = 0
-        for line in file:
-            line_count += 1
-            parsed = parse_log_line(line)
-            if parsed:
-                parsed["source_file"] = os.path.basename(log_file_path)
-                parsed["line_number"] = line_count
-                results.append(parsed)
+    if not failed_attempts:
+        return None
 
-    return results
+    # Convert to DataFrame
+    df = pd.DataFrame(failed_attempts)
+    
+    # Ensure all required columns are present
+    required_columns = ['timestamp', 'username', 'ip']
+    if not all(col in df.columns for col in required_columns):
+        return None
+
+    return df
 
 
 def get_ip_info(ip, database_path="GeoLite2-City.mmdb"):
@@ -123,10 +136,10 @@ def get_ip_info(ip, database_path="GeoLite2-City.mmdb"):
             return {
                 "latitude": None,
                 "longitude": None,
-                "country": "Private Network",
-                "city": "Private Network",
-                "region": "Private Network",
-                "isp": "Private Network",
+                "country": "Local",
+                "city": "Local",
+                "region": "Local",
+                "isp": "Local",
             }
 
         reader = geoip2.database.Reader(database_path)
@@ -145,24 +158,28 @@ def get_ip_info(ip, database_path="GeoLite2-City.mmdb"):
         }
     except Exception as e:
         print(f"Error getting IP info for {ip}: {e}")
-        return {
-            "latitude": None,
-            "longitude": None,
-            "country": "Unknown",
-            "city": "Unknown",
-            "region": "Unknown",
-            "isp": "Unknown",
-        }
+        return None  # Return None for error case
 
 
-def geolocate_ips(ip_list):
-    """Get geolocation information for a list of IP addresses"""
-    results = {}
-    for ip in ip_list:
+def geolocate_ips(df):
+    """Get geolocation information for IP addresses in the DataFrame"""
+    if df.empty:
+        return df
+
+    # Create new columns for geolocation data
+    geo_columns = ['latitude', 'longitude', 'country', 'city', 'region', 'isp']
+    for col in geo_columns:
+        df[col] = None
+
+    # Get geolocation info for each unique IP
+    for ip in df['ip'].unique():
         info = get_ip_info(ip)
-        if info:
-            results[ip] = info
-    return results
+        if info and isinstance(info, dict):  # Only process valid dictionary responses
+            mask = df['ip'] == ip
+            for col in geo_columns:
+                df.loc[mask, col] = info.get(col)
+
+    return df
 
 
 def plot_activity(df):
@@ -271,48 +288,46 @@ def create_visualizations(df, ip_info_dict=None):
 
 def generate_report(df):
     """Generate a report from the analysis results"""
-    if df.empty:
+    if df is None or df.empty:
         return "No data to analyze."
 
-    # Calculate basic statistics
+    # Convert timestamp column to datetime if it's not already
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+    # Calculate statistics
     total_attempts = len(df)
-    unique_ips = df["ip"].nunique()
-    unique_usernames = df["username"].nunique()
-    time_range = f"{df['timestamp'].min()} to {df['timestamp'].max()}"
+    unique_ips = df['ip'].nunique()
+    unique_usernames = df['username'].nunique()
+    time_range = f"{df['timestamp'].min().strftime('%Y-%m-%d %H:%M:%S')} to {df['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S')}"
 
-    # Create report
-    report = []
-    report.append("AUTH.LOG SECURITY ANALYSIS REPORT")
-    report.append("=" * 35)
-    report.append("")
-    report.append(f"Total failed login attempts: {total_attempts}")
-    report.append(f"Unique IP addresses: {unique_ips}")
-    report.append(f"Unique usernames attempted: {unique_usernames}")
-    report.append(f"Time range: {time_range}")
-    report.append("")
+    # Get top attacking IPs
+    top_ips = df['ip'].value_counts().head(5)
+    ip_list = "\n".join([f"{ip}: {count} attempts" for ip, count in top_ips.items()])
 
-    # Add top attacking IPs
-    report.append("Top attacking IP addresses:")
-    ip_counts = df["ip"].value_counts()
-    for ip, count in ip_counts.head(5).items():
-        report.append(f"- {ip}: {count} attempts")
-    report.append("")
+    # Get top targeted usernames
+    top_usernames = df['username'].value_counts().head(5)
+    username_list = "\n".join([f"{user}: {count} attempts" for user, count in top_usernames.items()])
 
-    # Add most attempted usernames
-    report.append("Most attempted usernames:")
-    username_counts = df["username"].value_counts()
-    for username, count in username_counts.head(5).items():
-        report.append(f"- {username}: {count} attempts")
-    report.append("")
+    # Get country statistics
+    country_stats = df['country'].value_counts()
+    country_list = "\n".join([f"{country}: {count} attempts" for country, count in country_stats.items()])
 
-    # Add country statistics if available
-    if "country" in df.columns:
-        report.append("Attacks by country:")
-        country_counts = df["country"].value_counts()
-        for country, count in country_counts.head(5).items():
-            report.append(f"- {country}: {count} attempts")
+    # Generate report
+    report = f"""Total failed login attempts: {total_attempts}
+Unique IP addresses: {unique_ips}
+Unique usernames: {unique_usernames}
+Time range: {time_range}
 
-    return "\n".join(report)
+Top attacking IP addresses:
+{ip_list}
+
+Top targeted usernames:
+{username_list}
+
+Country statistics:
+{country_list}"""
+
+    return report
 
 
 def process_log_files(file_path):
@@ -343,30 +358,37 @@ def upload_file():
     """Handle file upload and process the log file"""
     if "file" not in request.files:
         flash("No file selected", "error")
-        return redirect(url_for("index"))
+        return render_template("index.html", error="No file selected"), 400
 
     file = request.files["file"]
     if file.filename == "":
         flash("No file selected", "error")
-        return redirect(url_for("index"))
+        return render_template("index.html", error="No filename provided"), 400
 
     if not file or not file.stream.read():
         flash("File is empty", "error")
-        return "File is empty", 400
+        return render_template("index.html", error="File is empty"), 400
 
     # Reset file pointer after reading
     file.stream.seek(0)
 
     if not allowed_file(file.filename):
         flash("Invalid file type. Please upload a .log or .log.gz file.", "error")
-        return redirect(url_for("index"))
+        return render_template("index.html", error="Invalid file type"), 400
 
     try:
+        # Save the file temporarily
+        temp_path = os.path.join(flask_app.config["UPLOAD_FOLDER"], secure_filename(file.filename))
+        file.save(temp_path)
+
         # Process the log file
-        df = process_log_files(file)
+        df = process_log_files(temp_path)
         if df is None or df.empty:
             flash("No failed login attempts found in the file", "warning")
-            return redirect(url_for("index"))
+            return render_template("index.html", error="No failed login attempts found"), 400
+
+        # Store DataFrame as JSON in session
+        session['df_json'] = df.to_json()
 
         # Geolocate IP addresses
         df = geolocate_ips(df)
@@ -377,18 +399,62 @@ def upload_file():
         # Generate report
         report = generate_report(df)
 
+        # Store report in session for download
+        session['report_data'] = report
+
         # Render template with results
         return render_template(
             "results.html",
             report=report,
             hourly_chart=hourly_chart,
-            world_map=world_map,
+            world_map=world_map
         )
 
     except Exception as e:
         flask_app.logger.error(f"Error processing file: {str(e)}")
         flash(f"Error processing file: {str(e)}", "error")
+        return render_template("index.html", error=f"Error processing file: {str(e)}"), 400
+
+    finally:
+        # Clean up temporary file
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+@flask_app.route("/download/report")
+def download_report():
+    """Download the analysis report as a text file"""
+    if 'report_data' not in session:
+        flash("No report data available", "error")
         return redirect(url_for("index"))
+
+    report_data = session['report_data']
+    return Response(
+        report_data,
+        mimetype="text/plain",
+        headers={"Content-disposition": "attachment; filename=security_report.txt"}
+    )
+
+@flask_app.route("/download/csv")
+def download_csv():
+    """Download the analysis data as a CSV file"""
+    if 'df_json' not in session:
+        flash("No data available", "error")
+        return redirect(url_for("index"))
+
+    # Convert JSON back to DataFrame
+    df = pd.read_json(session['df_json'])
+
+    # Convert DataFrame to CSV
+    output = StringIO()
+    df.to_csv(output, index=False)
+    output.seek(0)
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-disposition": "attachment; filename=security_analysis.csv"}
+    )
 
 
 if __name__ == "__main__":
