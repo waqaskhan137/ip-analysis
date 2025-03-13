@@ -1,32 +1,33 @@
-import re
-import os
-import pandas as pd
-from datetime import datetime
-from collections import Counter
-import ipaddress
-import matplotlib.pyplot as plt
-import seaborn as sns
+import base64
 import gzip
-import requests
-import time
+import ipaddress
+import os
+import re
 import tempfile
-from flask import (
-    Flask,
-    render_template,
-    request,
-    flash,
-    redirect,
-    url_for,
-    send_file,
-    session,
-)
+import time
+from collections import Counter
+from datetime import datetime
+from io import BytesIO
+
 import folium
 import geoip2.database
-from werkzeug.utils import secure_filename
+import matplotlib.pyplot as plt
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from io import BytesIO
-import base64
+import requests
+import seaborn as sns
+from flask import (
+    Flask,
+    flash,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
+    url_for,
+)
+from werkzeug.utils import secure_filename
 
 # Create Flask app
 flask_app = Flask(__name__)
