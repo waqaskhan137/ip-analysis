@@ -54,8 +54,8 @@ def parse_log_line(line):
     """Parse a single line from the auth.log file"""
     # Common patterns for failed login attempts
     patterns = [
-        r'(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+).*Failed password for (?:invalid user )?(?P<username>\S+) from (?P<ip>\d+\.\d+\.\d+\.\d+)',
-        r'(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+).*authentication failure.*ruser=(?P<username>\S+).*rhost=(?P<ip>\d+\.\d+\.\d+\.\d+)',
+        r'(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+).*Failed password for(?: invalid user)? (?P<username>\S+) from (?P<ip>\d+\.\d+\.\d+\.\d+)',
+        r'(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+).*Authentication failure.*user=(?P<username>\S+).*rhost=(?P<ip>\d+\.\d+\.\d+\.\d+)',
         r'(?P<timestamp>\w+\s+\d+\s+\d+:\d+:\d+).*Invalid user (?P<username>\S+) from (?P<ip>\d+\.\d+\.\d+\.\d+)',
     ]
 
@@ -68,9 +68,10 @@ def parse_log_line(line):
                 current_year = datetime.now().year
                 timestamp_str = f"{current_year} {data['timestamp']}"
                 data['timestamp'] = datetime.strptime(timestamp_str, "%Y %b %d %H:%M:%S")
+                data['log_entry'] = line.strip()
+                return data
             except ValueError:
                 continue
-            return data
     return None
 
 
@@ -134,12 +135,12 @@ def get_ip_info(ip, database_path="GeoLite2-City.mmdb"):
         # Check if IP is private
         if ipaddress.ip_address(ip).is_private:
             return {
-                "latitude": None,
-                "longitude": None,
-                "country": "Local",
+                "latitude": 0,
+                "longitude": 0,
+                "country": "Private Network",
                 "city": "Local",
-                "region": "Local",
-                "isp": "Local",
+                "region": "N/A",
+                "isp": "Private",
             }
 
         reader = geoip2.database.Reader(database_path)
@@ -158,7 +159,14 @@ def get_ip_info(ip, database_path="GeoLite2-City.mmdb"):
         }
     except Exception as e:
         print(f"Error getting IP info for {ip}: {e}")
-        return None  # Return None for error case
+        return {
+            "latitude": 0,
+            "longitude": 0,
+            "country": "Unknown",
+            "city": "Unknown",
+            "region": "Unknown",
+            "isp": "Unknown",
+        }
 
 
 def geolocate_ips(df):
@@ -219,6 +227,41 @@ def plot_activity(df):
     return fig
 
 
+def plot_username_distribution(df):
+    """Create a pie chart of username distribution"""
+    if df.empty:
+        # Create an empty figure with a message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No data available",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+        )
+        fig.update_layout(title="Username Distribution")
+        return fig
+
+    # Count username occurrences
+    username_counts = df["username"].value_counts()
+
+    # Create pie chart
+    fig = go.Figure(data=[go.Pie(
+        labels=username_counts.index,
+        values=username_counts.values,
+        hole=0.3,
+        textinfo="label+percent"
+    )])
+
+    fig.update_layout(
+        title="Username Distribution",
+        showlegend=True
+    )
+
+    return fig
+
+
 def create_world_map(df):
     """Create a world map with markers for each IP location"""
     # Create a base map
@@ -273,17 +316,21 @@ def create_world_map(df):
 def create_visualizations(df, ip_info_dict=None):
     """Create visualizations from the data"""
     if df.empty:
-        return "", ""
+        return "", "", ""
 
     # Create time series plot
     hourly_chart = plot_activity(df)
-    hourly_chart_html = hourly_chart.to_html(full_html=False) if hourly_chart else ""
+    hourly_chart_html = hourly_chart.to_html(full_html=False, div_id="timeChart") if hourly_chart else ""
+
+    # Create username distribution plot
+    username_chart = plot_username_distribution(df)
+    username_chart_html = username_chart.to_html(full_html=False, div_id="usernameChart") if username_chart else ""
 
     # Create world map
     world_map = create_world_map(df)
     map_html = world_map._repr_html_() if world_map else ""
 
-    return hourly_chart_html, map_html
+    return hourly_chart_html, username_chart_html, map_html
 
 
 def generate_report(df):
@@ -333,12 +380,9 @@ Country statistics:
 def process_log_files(file_path):
     """Process log files and return a DataFrame with analysis results"""
     # Analyze the log file
-    results = analyze_auth_log(file_path)
-    if not results:
+    df = analyze_auth_log(file_path)
+    if df is None or df.empty:
         return None
-
-    # Convert to DataFrame
-    df = pd.DataFrame(results)
 
     # Add hourly counts
     df["hour"] = df["timestamp"].dt.floor("H")
@@ -357,24 +401,33 @@ def index():
 def upload_file():
     """Handle file upload and process the log file"""
     if "file" not in request.files:
-        flash("No file selected", "error")
-        return render_template("index.html", error="No file selected"), 400
+        if request.accept_mimetypes.accept_html:
+            flash("No file selected", "error")
+            return render_template("index.html", error="No file selected"), 400
+        return "No file part", 400
 
     file = request.files["file"]
     if file.filename == "":
-        flash("No file selected", "error")
-        return render_template("index.html", error="No filename provided"), 400
+        if request.accept_mimetypes.accept_html:
+            flash("No file selected", "error")
+            return render_template("index.html", error="No selected file"), 400
+        return "No selected file", 400
 
     if not file or not file.stream.read():
-        flash("File is empty", "error")
-        return render_template("index.html", error="File is empty"), 400
+        file.stream.seek(0)  # Reset file pointer
+        if request.accept_mimetypes.accept_html:
+            flash("File is empty", "error")
+            return render_template("index.html", error="File is empty"), 400
+        return "File is empty", 400
 
     # Reset file pointer after reading
     file.stream.seek(0)
 
     if not allowed_file(file.filename):
-        flash("Invalid file type. Please upload a .log or .log.gz file.", "error")
-        return render_template("index.html", error="Invalid file type"), 400
+        if request.accept_mimetypes.accept_html:
+            flash("Invalid file type. Please upload a .log or .log.gz file.", "error")
+            return render_template("index.html", error="Invalid file type"), 400
+        return "Invalid file type", 400
 
     try:
         # Save the file temporarily
@@ -384,17 +437,24 @@ def upload_file():
         # Process the log file
         df = process_log_files(temp_path)
         if df is None or df.empty:
-            flash("No failed login attempts found in the file", "warning")
-            return render_template("index.html", error="No failed login attempts found"), 400
+            if request.accept_mimetypes.accept_html:
+                flash("No failed login attempts found in the file", "warning")
+                return render_template("index.html", error="No failed login attempts found"), 400
+            return "No failed login attempts found", 400
 
         # Store DataFrame as JSON in session
         session['df_json'] = df.to_json()
 
         # Geolocate IP addresses
         df = geolocate_ips(df)
+        if df is None or df.empty:
+            if request.accept_mimetypes.accept_html:
+                flash("Error processing geolocation data", "error")
+                return render_template("index.html", error="Error processing geolocation data"), 400
+            return "Error processing geolocation data", 400
 
         # Create visualizations
-        hourly_chart, world_map = create_visualizations(df)
+        hourly_chart, username_chart, world_map = create_visualizations(df)
 
         # Generate report
         report = generate_report(df)
@@ -407,13 +467,16 @@ def upload_file():
             "results.html",
             report=report,
             hourly_chart=hourly_chart,
+            username_chart=username_chart,
             world_map=world_map
         )
 
     except Exception as e:
         flask_app.logger.error(f"Error processing file: {str(e)}")
-        flash(f"Error processing file: {str(e)}", "error")
-        return render_template("index.html", error=f"Error processing file: {str(e)}"), 400
+        if request.accept_mimetypes.accept_html:
+            flash(f"Error processing file: {str(e)}", "error")
+            return render_template("index.html", error=f"Error processing file: {str(e)}"), 400
+        return f"Error processing file: {str(e)}", 400
 
     finally:
         # Clean up temporary file
@@ -421,12 +484,14 @@ def upload_file():
             os.remove(temp_path)
 
 
-@flask_app.route("/download/report")
-def download_report():
-    """Download the analysis report as a text file"""
+@flask_app.route("/download")
+def download():
+    """Backward compatibility route for /download"""
     if 'report_data' not in session:
-        flash("No report data available", "error")
-        return redirect(url_for("index"))
+        if request.accept_mimetypes.accept_html:
+            flash("No report data available", "error")
+            return render_template("index.html", error="No report available"), 200
+        return "No report available", 200
 
     report_data = session['report_data']
     return Response(
@@ -439,8 +504,10 @@ def download_report():
 def download_csv():
     """Download the analysis data as a CSV file"""
     if 'df_json' not in session:
-        flash("No data available", "error")
-        return redirect(url_for("index"))
+        if request.accept_mimetypes.accept_html:
+            flash("No data available", "error")
+            return render_template("index.html", error="No data available"), 404
+        return "No data available", 404
 
     # Convert JSON back to DataFrame
     df = pd.read_json(session['df_json'])
