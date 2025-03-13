@@ -126,7 +126,7 @@ def get_ip_info(ip, database_path="GeoLite2-City.mmdb"):
                 "country": "Private Network",
                 "city": "Private Network",
                 "region": "Private Network",
-                "isp": "Private Network"
+                "isp": "Private Network",
             }
 
         reader = geoip2.database.Reader(database_path)
@@ -136,8 +136,12 @@ def get_ip_info(ip, database_path="GeoLite2-City.mmdb"):
             "longitude": response.location.longitude,
             "country": response.country.name or "Unknown",
             "city": response.city.name or "Unknown",
-            "region": response.subdivisions.most_specific.name if response.subdivisions else "Unknown",
-            "isp": "Unknown"  # ISP info requires a different database
+            "region": (
+                response.subdivisions.most_specific.name
+                if response.subdivisions
+                else "Unknown"
+            ),
+            "isp": "Unknown",  # ISP info requires a different database
         }
     except Exception as e:
         print(f"Error getting IP info for {ip}: {e}")
@@ -147,7 +151,7 @@ def get_ip_info(ip, database_path="GeoLite2-City.mmdb"):
             "country": "Unknown",
             "city": "Unknown",
             "region": "Unknown",
-            "isp": "Unknown"
+            "isp": "Unknown",
         }
 
 
@@ -178,21 +182,21 @@ def plot_activity(df):
         return fig
 
     # Group by hour and count attempts
-    hourly_counts = df.groupby(df['timestamp'].dt.floor('h')).size().reset_index(name='count')
+    hourly_counts = (
+        df.groupby(df["timestamp"].dt.floor("h")).size().reset_index(name="count")
+    )
 
     # Create the plot
     fig = px.line(
         hourly_counts,
-        x='timestamp',
-        y='count',
-        title='Failed Login Attempts Over Time',
-        labels={'timestamp': 'Time', 'count': 'Number of Attempts'}
+        x="timestamp",
+        y="count",
+        title="Failed Login Attempts Over Time",
+        labels={"timestamp": "Time", "count": "Number of Attempts"},
     )
 
     fig.update_layout(
-        xaxis_title="Time",
-        yaxis_title="Number of Failed Attempts",
-        showlegend=False
+        xaxis_title="Time", yaxis_title="Number of Failed Attempts", showlegend=False
     )
 
     return fig
@@ -205,29 +209,33 @@ def create_world_map(df):
 
     if df.empty:
         # Add a message for empty data
-        folium.Element("""
+        folium.Element(
+            """
             <div style='position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                        background-color: white; padding: 10px; border-radius: 5px;'>
                 No location data available
             </div>
-        """).add_to(m)
+        """
+        ).add_to(m)
         return m
 
     # Check for required columns
-    required_columns = ['ip', 'latitude', 'longitude', 'country', 'city', 'region']
+    required_columns = ["ip", "latitude", "longitude", "country", "city", "region"]
     if not all(col in df.columns for col in required_columns):
         # Add a message for missing columns
-        folium.Element("""
+        folium.Element(
+            """
             <div style='position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                        background-color: white; padding: 10px; border-radius: 5px;'>
                 Missing required location data
             </div>
-        """).add_to(m)
+        """
+        ).add_to(m)
         return m
 
     # Add markers for each IP location
     for _, row in df.iterrows():
-        if pd.notna(row['latitude']) and pd.notna(row['longitude']):
+        if pd.notna(row["latitude"]) and pd.notna(row["longitude"]):
             popup_html = f"""
                 <div style='font-family: Arial, sans-serif;'>
                     <h4>IP: {row['ip']}</h4>
@@ -237,9 +245,9 @@ def create_world_map(df):
                 </div>
             """
             folium.Marker(
-                location=[row['latitude'], row['longitude']],
+                location=[row["latitude"], row["longitude"]],
                 popup=folium.Popup(popup_html, max_width=300),
-                icon=folium.Icon(color='red', icon='info-sign')
+                icon=folium.Icon(color="red", icon="info-sign"),
             ).add_to(m)
 
     return m
@@ -268,8 +276,8 @@ def generate_report(df):
 
     # Calculate basic statistics
     total_attempts = len(df)
-    unique_ips = df['ip'].nunique()
-    unique_usernames = df['username'].nunique()
+    unique_ips = df["ip"].nunique()
+    unique_usernames = df["username"].nunique()
     time_range = f"{df['timestamp'].min()} to {df['timestamp'].max()}"
 
     # Create report
@@ -285,22 +293,22 @@ def generate_report(df):
 
     # Add top attacking IPs
     report.append("Top attacking IP addresses:")
-    ip_counts = df['ip'].value_counts()
+    ip_counts = df["ip"].value_counts()
     for ip, count in ip_counts.head(5).items():
         report.append(f"- {ip}: {count} attempts")
     report.append("")
 
     # Add most attempted usernames
     report.append("Most attempted usernames:")
-    username_counts = df['username'].value_counts()
+    username_counts = df["username"].value_counts()
     for username, count in username_counts.head(5).items():
         report.append(f"- {username}: {count} attempts")
     report.append("")
 
     # Add country statistics if available
-    if 'country' in df.columns:
+    if "country" in df.columns:
         report.append("Attacks by country:")
-        country_counts = df['country'].value_counts()
+        country_counts = df["country"].value_counts()
         for country, count in country_counts.head(5).items():
             report.append(f"- {country}: {count} attempts")
 
@@ -313,15 +321,15 @@ def process_log_files(file_path):
     results = analyze_auth_log(file_path)
     if not results:
         return None
-    
+
     # Convert to DataFrame
     df = pd.DataFrame(results)
-    
+
     # Add hourly counts
-    df['hour'] = df['timestamp'].dt.floor('H')
-    hourly_counts = df.groupby('hour').size().reset_index(name='count')
-    df = df.merge(hourly_counts, left_on='hour', right_on='hour', how='left')
-    
+    df["hour"] = df["timestamp"].dt.floor("H")
+    hourly_counts = df.groupby("hour").size().reset_index(name="count")
+    df = df.merge(hourly_counts, left_on="hour", right_on="hour", how="left")
+
     return df
 
 
@@ -374,7 +382,7 @@ def upload_file():
             "results.html",
             report=report,
             hourly_chart=hourly_chart,
-            world_map=world_map
+            world_map=world_map,
         )
 
     except Exception as e:
