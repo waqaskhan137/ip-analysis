@@ -55,7 +55,7 @@ def parse_log_line(line):
         r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*sshd\[\d+\]: Failed password for.*from (\d+\.\d+\.\d+\.\d+)",
         r"((?:\w+\s+\d+\s+\d+:\d+:\d+)|(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})).*sshd\[\d+\]: Invalid user .* from (\d+\.\d+\.\d+\.\d+)",
     ]
-    
+
     for pattern in patterns:
         match = re.search(pattern, line)
         if match:
@@ -67,7 +67,7 @@ def parse_log_line(line):
                 "timestamp": parse_timestamp(timestamp_str),
                 "ip": ip,
                 "username": username,
-                "log_entry": line.strip()
+                "log_entry": line.strip(),
             }
     return None
 
@@ -118,13 +118,13 @@ def analyze_auth_log(log_file_path):
 def get_ip_info(ip):
     """Get geolocation information for an IP address"""
     try:
-        reader = geoip2.database.Reader('GeoLite2-City.mmdb')
+        reader = geoip2.database.Reader("GeoLite2-City.mmdb")
         response = reader.city(ip)
         return {
-            'latitude': response.location.latitude,
-            'longitude': response.location.longitude,
-            'country': response.country.name,
-            'city': response.city.name
+            "latitude": response.location.latitude,
+            "longitude": response.location.longitude,
+            "country": response.country.name,
+            "city": response.city.name,
         }
     except Exception as e:
         print(f"Error getting IP info for {ip}: {e}")
@@ -143,7 +143,7 @@ def geolocate_ips(ip_list):
 
 def plot_activity(df):
     """Create a time series plot of failed login attempts"""
-    fig = px.line(df, x='timestamp', y='count', title='Failed Login Attempts Over Time')
+    fig = px.line(df, x="timestamp", y="count", title="Failed Login Attempts Over Time")
     return fig
 
 
@@ -151,10 +151,10 @@ def create_world_map(ip_locations):
     """Create a world map with markers for attack sources"""
     m = folium.Map(location=[0, 0], zoom_start=2)
     for ip, info in ip_locations.items():
-        if info.get('latitude') and info.get('longitude'):
+        if info.get("latitude") and info.get("longitude"):
             folium.Marker(
-                [info['latitude'], info['longitude']],
-                popup=f"IP: {ip}<br>Country: {info.get('country', 'Unknown')}<br>City: {info.get('city', 'Unknown')}"
+                [info["latitude"], info["longitude"]],
+                popup=f"IP: {ip}<br>Country: {info.get('country', 'Unknown')}<br>City: {info.get('city', 'Unknown')}",
             ).add_to(m)
     return m
 
@@ -163,43 +163,43 @@ def create_visualizations(df):
     """Create all visualizations for the analysis results"""
     # Time series plot
     time_plot = plot_activity(df)
-    
+
     # Username distribution
-    username_counts = df['username'].value_counts()
+    username_counts = df["username"].value_counts()
     username_plot = px.pie(
         values=username_counts.values,
         names=username_counts.index,
-        title='Username Distribution in Failed Login Attempts'
+        title="Username Distribution in Failed Login Attempts",
     )
-    
+
     # IP geolocation
-    ip_locations = geolocate_ips(df['ip'].unique())
+    ip_locations = geolocate_ips(df["ip"].unique())
     world_map = create_world_map(ip_locations)
-    
+
     return {
-        'time_plot': time_plot,
-        'username_plot': username_plot,
-        'world_map': world_map
+        "time_plot": time_plot,
+        "username_plot": username_plot,
+        "world_map": world_map,
     }
 
 
 def generate_report(df):
     """Generate a comprehensive report of the analysis"""
     total_attempts = len(df)
-    unique_ips = df['ip'].nunique()
-    unique_usernames = df['username'].nunique()
-    time_range = df['timestamp'].max() - df['timestamp'].min()
-    
+    unique_ips = df["ip"].nunique()
+    unique_usernames = df["username"].nunique()
+    time_range = df["timestamp"].max() - df["timestamp"].min()
+
     visualizations = create_visualizations(df)
-    
+
     return {
-        'stats': {
-            'total_attempts': total_attempts,
-            'unique_ips': unique_ips,
-            'unique_usernames': unique_usernames,
-            'time_range': time_range
+        "stats": {
+            "total_attempts": total_attempts,
+            "unique_ips": unique_ips,
+            "unique_usernames": unique_usernames,
+            "time_range": time_range,
         },
-        'visualizations': visualizations
+        "visualizations": visualizations,
     }
 
 
@@ -245,9 +245,7 @@ def upload_file():
         session["analysis_results"] = df.to_dict("records")
 
         return render_template(
-            "results.html",
-            results=df.to_dict("records"),
-            report=report
+            "results.html", results=df.to_dict("records"), report=report
         )
     except Exception as e:
         flash(f"Error processing file: {str(e)}", "danger")
