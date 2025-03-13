@@ -51,9 +51,11 @@ def test_upload_regular_log_file(client, sample_auth_log, mock_dataframe):
     data = {"file": (BytesIO(sample_auth_log.encode()), "auth.log")}
 
     # Mock the processing functions
-    with patch("app.process_log_files") as mock_process, patch(
-        "app.geolocate_ips"
-    ) as mock_geolocate, patch("app.create_visualizations") as mock_visualizations:
+    with (
+        patch("app.process_log_files") as mock_process,
+        patch("app.geolocate_ips") as mock_geolocate,
+        patch("app.create_visualizations") as mock_visualizations,
+    ):
 
         mock_process.return_value = mock_dataframe
         mock_geolocate.return_value = mock_dataframe
@@ -88,9 +90,11 @@ def test_upload_gzipped_log_file(client, sample_gzipped_log, mock_dataframe):
         data = {"file": (BytesIO(f.read()), "auth.log.gz")}
 
     # Mock the processing functions
-    with patch("app.process_log_files") as mock_process, patch(
-        "app.geolocate_ips"
-    ) as mock_geolocate, patch("app.create_visualizations") as mock_visualizations:
+    with (
+        patch("app.process_log_files") as mock_process,
+        patch("app.geolocate_ips") as mock_geolocate,
+        patch("app.create_visualizations") as mock_visualizations,
+    ):
 
         mock_process.return_value = mock_dataframe
         mock_geolocate.return_value = mock_dataframe
