@@ -1,6 +1,8 @@
-import pytest
+from unittest.mock import MagicMock, patch
+
 import pandas as pd
-from unittest.mock import patch, MagicMock
+import pytest
+
 from app import geolocate_ips, get_ip_info
 
 

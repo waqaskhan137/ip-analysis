@@ -1,6 +1,8 @@
-import pytest
 from datetime import datetime
-from app import parse_log_line, analyze_auth_log, read_log_file
+
+import pytest
+
+from app import analyze_auth_log, parse_log_line, read_log_file
 
 
 def test_parse_log_line_failed_password():

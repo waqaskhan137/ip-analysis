@@ -1,8 +1,10 @@
-import pytest
-import pandas as pd
-from datetime import datetime
 import os
-from app import generate_report, plot_activity, create_world_map, create_visualizations
+from datetime import datetime
+
+import pandas as pd
+import pytest
+
+from app import create_visualizations, create_world_map, generate_report, plot_activity
 
 
 def create_test_dataframe():
