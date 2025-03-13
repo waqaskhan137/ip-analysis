@@ -1,6 +1,8 @@
 import os
-from app import flask_app
+
 from waitress import serve
+
+from app import flask_app
 
 if __name__ == "__main__":
     # Get host and port from environment variables or use defaults
