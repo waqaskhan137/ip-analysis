@@ -1,0 +1,8 @@
+flask==3.0.2
+pandas==2.2.1
+matplotlib==3.8.3
+seaborn==0.13.2
+geoip2==4.8.0
+folium==0.15.1
+python-dotenv==1.0.1
+waitress==3.0.2

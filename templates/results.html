@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+
+{% block title %}Analysis Results - Auth Log Analyzer{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stat-card {
+        background: linear-gradient(45deg, #0d6efd, #0dcaf0);
+        color: white;
+        border: none;
+    }
+    .stat-card .card-body {
+        padding: 1.5rem;
+    }
+    .stat-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+    }
+    .stat-label {
+        font-size: 1rem;
+        opacity: 0.9;
+    }
+    .map-container {
+        height: 600px;
+        margin-bottom: 2rem;
+        width: 100%;
+    }
+    .chart-container {
+        height: 400px;
+        margin-bottom: 2rem;
+        width: 100%;
+    }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<script>
+    // Initialize error tracking
+    window.errors = [];
+    window.onerror = function(msg, url, line, col, error) {
+        window.errors.push({
+            message: msg,
+            url: url,
+            line: line,
+            col: col,
+            error: error && error.stack
+        });
+        console.error('JavaScript error:', msg, url, line, col, error);
+        return false;
+    };
+
+    // Function to initialize charts
+    function initializeCharts() {
+        try {
+            // Time series chart
+            const timeData = {{ results|tojson|safe }};
+            console.log('Time data:', timeData);  // Debug log
+            
+            const timeChartData = [{
+                x: timeData.map(d => d.timestamp),
+                y: timeData.map(d => 1),
+                type: 'scatter',
+                mode: 'markers',
+                name: 'Failed Attempts'
+            }];
+            console.log('Time chart data:', timeChartData);  // Debug log
+            
+            const timeLayout = {
+                title: 'Failed Login Attempts Over Time',
+                xaxis: { title: 'Time' },
+                yaxis: { title: 'Number of Attempts' }
+            };
+            
+            // Username distribution chart
+            const usernameCounts = {};
+            timeData.forEach(d => {
+                usernameCounts[d.username] = (usernameCounts[d.username] || 0) + 1;
+            });
+            console.log('Username counts:', usernameCounts);  // Debug log
+            
+            const usernameData = [{
+                values: Object.values(usernameCounts),
+                labels: Object.keys(usernameCounts),
+                type: 'pie',
+                name: 'Username Distribution'
+            }];
+            console.log('Username chart data:', usernameData);  // Debug log
+            
+            const usernameLayout = {
+                title: 'Distribution of Targeted Usernames'
+            };
+            
+            // Plot both charts
+            Promise.all([
+                Plotly.newPlot('timeChart', timeChartData, timeLayout, {responsive: true}),
+                Plotly.newPlot('usernameChart', usernameData, usernameLayout, {responsive: true})
+            ]).then(() => {
+                console.log('Charts plotted successfully');
+                // Force Plotly to properly size the charts
+                window.dispatchEvent(new Event('resize'));
+            }).catch(error => {
+                console.error('Error plotting charts:', error);
+                window.errors.push({
+                    message: 'Error plotting charts',
+                    error: error && error.stack
+                });
+            });
+        } catch (error) {
+            console.error('Error in chart initialization:', error);
+            window.errors.push({
+                message: 'Error in chart initialization',
+                error: error && error.stack
+            });
+        }
+    }
+
+    // Function to check if Plotly is loaded
+    function waitForPlotly() {
+        return new Promise((resolve, reject) => {
+            const maxAttempts = 20;
+            let attempts = 0;
+            
+            function checkPlotly() {
+                attempts++;
+                if (typeof Plotly !== 'undefined') {
+                    console.log('Plotly loaded successfully');
+                    resolve();
+                } else if (attempts >= maxAttempts) {
+                    console.error('Plotly failed to load');
+                    reject(new Error('Plotly failed to load'));
+                } else {
+                    console.log('Waiting for Plotly to load...');
+                    setTimeout(checkPlotly, 250);
+                }
+            }
+            
+            checkPlotly();
+        });
+    }
+
+    // Initialize everything when the DOM is ready
+    document.addEventListener('DOMContentLoaded', function() {
+        console.log('DOM content loaded');
+        waitForPlotly()
+            .then(() => {
+                console.log('Starting chart initialization');
+                initializeCharts();
+            })
+            .catch(error => {
+                console.error('Failed to initialize charts:', error);
+                window.errors.push({
+                    message: 'Failed to initialize charts',
+                    error: error && error.stack
+                });
+            });
+    });
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="row results-container">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0">Analysis Results</h4>
+            </div>
+            <div class="card-body">
+                <div class="row mb-4">
+                    <div class="col-md-4">
+                        <div class="card stat-card">
+                            <div class="card-body">
+                                <div class="stat-number">{{ results|length }}</div>
+                                <div class="stat-label">Total Failed Attempts</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card stat-card">
+                            <div class="card-body">
+                                <div class="stat-number">{{ results|map(attribute='ip')|unique|list|length }}</div>
+                                <div class="stat-label">Unique IP Addresses</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card stat-card">
+                            <div class="card-body">
+                                <div class="stat-number">{{ results|map(attribute='username')|unique|list|length }}</div>
+                                <div class="stat-label">Targeted Usernames</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Failed Login Attempts Over Time</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="timeChart" class="chart-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 class="mb-0">Top Targeted Usernames</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="usernameChart" class="chart-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>IP Address</th>
+                                <th>Username</th>
+                                <th>Log Entry</th>
+                                <th>Source File</th>
+                                <th>Line Number</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for result in results %}
+                            <tr>
+                                <td>{{ result.timestamp }}</td>
+                                <td>{{ result.ip }}</td>
+                                <td>{{ result.username }}</td>
+                                <td>{{ result.log_entry }}</td>
+                                <td>{{ result.source_file }}</td>
+                                <td>{{ result.line_number }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

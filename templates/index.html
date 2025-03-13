@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Auth Log - Auth Log Analyzer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0">Upload Auth Log File</h4>
+            </div>
+            <div class="card-body">
+                <form action="{{ url_for('upload_file') }}" method="post" enctype="multipart/form-data">
+                    <div class="upload-area mb-4" id="dropZone">
+                        <input type="file" name="file" id="fileInput" class="d-none" accept=".log,.gz">
+                        <div class="text-center">
+                            <i class="fas fa-cloud-upload-alt fa-3x mb-3 text-primary"></i>
+                            <h5>Drag and drop your auth.log file here</h5>
+                            <p class="text-muted">or</p>
+                            <button type="button" class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                                Browse Files
+                            </button>
+                            <p class="mt-2 text-muted">Supported formats: .log, .gz</p>
+                        </div>
+                    </div>
+                    <div class="text-center">
+                        <button type="submit" class="btn btn-success" id="submitBtn" disabled>
+                            <i class="fas fa-upload me-2"></i>Analyze Log
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0">About</h4>
+            </div>
+            <div class="card-body">
+                <p>This tool analyzes authentication log files to identify:</p>
+                <ul>
+                    <li>Failed login attempts</li>
+                    <li>Attack patterns and trends</li>
+                    <li>Geographic distribution of attacks</li>
+                    <li>Targeted usernames</li>
+                    <li>Time-based attack patterns</li>
+                </ul>
+                <p>Upload your auth.log file to get started with the analysis.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const submitBtn = document.getElementById('submitBtn');
+
+    // Handle file selection
+    fileInput.addEventListener('change', function() {
+        if (this.files.length > 0) {
+            submitBtn.disabled = false;
+        } else {
+            submitBtn.disabled = true;
+        }
+    });
+
+    // Handle drag and drop
+    dropZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        this.style.borderColor = '#0d6efd';
+        this.style.backgroundColor = '#f8f9fa';
+    });
+
+    dropZone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        this.style.borderColor = '#dee2e6';
+        this.style.backgroundColor = 'transparent';
+    });
+
+    dropZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        this.style.borderColor = '#dee2e6';
+        this.style.backgroundColor = 'transparent';
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            fileInput.files = files;
+            submitBtn.disabled = false;
+        }
+    });
+});
+</script>
+{% endblock %} 
