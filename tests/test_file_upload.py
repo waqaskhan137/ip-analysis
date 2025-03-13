@@ -73,8 +73,8 @@ def test_upload_regular_log_file(client, sample_auth_log, mock_dataframe):
             # Check response
             assert response.status_code == 200
             assert b"Analysis Results - Auth Log Analyzer" in response.data
-            assert b"Total Failed Attempts" in response.data
-            assert b"Unique IP Addresses" in response.data
+            assert b"Total failed login attempts" in response.data
+            assert b"Unique IP addresses" in response.data
             assert b"<div>Hourly Chart</div>" in response.data
             assert b"<div>Map</div>" in response.data
 
@@ -112,10 +112,15 @@ def test_upload_gzipped_log_file(client, sample_gzipped_log, mock_dataframe):
             # Check response
             assert response.status_code == 200
             assert b"Analysis Results - Auth Log Analyzer" in response.data
-            assert b"Total Failed Attempts" in response.data
-            assert b"Unique IP Addresses" in response.data
+            assert b"Total failed login attempts" in response.data
+            assert b"Unique IP addresses" in response.data
             assert b"<div>Hourly Chart</div>" in response.data
             assert b"<div>Map</div>" in response.data
+
+            # Verify the processing functions were called
+            mock_process.assert_called_once()
+            mock_geolocate.assert_called_once()
+            mock_visualizations.assert_called_once()
 
 
 def test_upload_empty_file(client):

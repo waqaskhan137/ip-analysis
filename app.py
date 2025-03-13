@@ -115,20 +115,40 @@ def analyze_auth_log(log_file_path):
     return results
 
 
-def get_ip_info(ip):
+def get_ip_info(ip, database_path="GeoLite2-City.mmdb"):
     """Get geolocation information for an IP address"""
     try:
-        reader = geoip2.database.Reader("GeoLite2-City.mmdb")
+        # Check if IP is private
+        if ipaddress.ip_address(ip).is_private:
+            return {
+                "latitude": None,
+                "longitude": None,
+                "country": "Private Network",
+                "city": "Private Network",
+                "region": "Private Network",
+                "isp": "Private Network"
+            }
+
+        reader = geoip2.database.Reader(database_path)
         response = reader.city(ip)
         return {
             "latitude": response.location.latitude,
             "longitude": response.location.longitude,
-            "country": response.country.name,
-            "city": response.city.name,
+            "country": response.country.name or "Unknown",
+            "city": response.city.name or "Unknown",
+            "region": response.subdivisions.most_specific.name if response.subdivisions else "Unknown",
+            "isp": "Unknown"  # ISP info requires a different database
         }
     except Exception as e:
         print(f"Error getting IP info for {ip}: {e}")
-        return None
+        return {
+            "latitude": None,
+            "longitude": None,
+            "country": "Unknown",
+            "city": "Unknown",
+            "region": "Unknown",
+            "isp": "Unknown"
+        }
 
 
 def geolocate_ips(ip_list):
@@ -143,64 +163,166 @@ def geolocate_ips(ip_list):
 
 def plot_activity(df):
     """Create a time series plot of failed login attempts"""
-    fig = px.line(df, x="timestamp", y="count", title="Failed Login Attempts Over Time")
+    if df.empty:
+        # Create an empty figure with a message
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No data available",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+        )
+        fig.update_layout(title="Failed Login Attempts Over Time")
+        return fig
+
+    # Group by hour and count attempts
+    hourly_counts = df.groupby(df['timestamp'].dt.floor('h')).size().reset_index(name='count')
+
+    # Create the plot
+    fig = px.line(
+        hourly_counts,
+        x='timestamp',
+        y='count',
+        title='Failed Login Attempts Over Time',
+        labels={'timestamp': 'Time', 'count': 'Number of Attempts'}
+    )
+
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title="Number of Failed Attempts",
+        showlegend=False
+    )
+
     return fig
 
 
-def create_world_map(ip_locations):
-    """Create a world map with markers for attack sources"""
+def create_world_map(df):
+    """Create a world map with markers for each IP location"""
+    # Create a base map
     m = folium.Map(location=[0, 0], zoom_start=2)
-    for ip, info in ip_locations.items():
-        if info.get("latitude") and info.get("longitude"):
+
+    if df.empty:
+        # Add a message for empty data
+        folium.Element("""
+            <div style='position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                       background-color: white; padding: 10px; border-radius: 5px;'>
+                No location data available
+            </div>
+        """).add_to(m)
+        return m
+
+    # Check for required columns
+    required_columns = ['ip', 'latitude', 'longitude', 'country', 'city', 'region']
+    if not all(col in df.columns for col in required_columns):
+        # Add a message for missing columns
+        folium.Element("""
+            <div style='position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                       background-color: white; padding: 10px; border-radius: 5px;'>
+                Missing required location data
+            </div>
+        """).add_to(m)
+        return m
+
+    # Add markers for each IP location
+    for _, row in df.iterrows():
+        if pd.notna(row['latitude']) and pd.notna(row['longitude']):
+            popup_html = f"""
+                <div style='font-family: Arial, sans-serif;'>
+                    <h4>IP: {row['ip']}</h4>
+                    <p>Country: {row['country'] if pd.notna(row['country']) else 'Unknown'}</p>
+                    <p>City: {row['city'] if pd.notna(row['city']) else 'Unknown'}</p>
+                    <p>Region: {row['region'] if pd.notna(row['region']) else 'Unknown'}</p>
+                </div>
+            """
             folium.Marker(
-                [info["latitude"], info["longitude"]],
-                popup=f"IP: {ip}<br>Country: {info.get('country', 'Unknown')}<br>City: {info.get('city', 'Unknown')}",
+                location=[row['latitude'], row['longitude']],
+                popup=folium.Popup(popup_html, max_width=300),
+                icon=folium.Icon(color='red', icon='info-sign')
             ).add_to(m)
+
     return m
 
 
-def create_visualizations(df):
-    """Create all visualizations for the analysis results"""
-    # Time series plot
-    time_plot = plot_activity(df)
+def create_visualizations(df, ip_info_dict=None):
+    """Create visualizations from the data"""
+    if df.empty:
+        return "", ""
 
-    # Username distribution
-    username_counts = df["username"].value_counts()
-    username_plot = px.pie(
-        values=username_counts.values,
-        names=username_counts.index,
-        title="Username Distribution in Failed Login Attempts",
-    )
+    # Create time series plot
+    hourly_chart = plot_activity(df)
+    hourly_chart_html = hourly_chart.to_html(full_html=False) if hourly_chart else ""
 
-    # IP geolocation
-    ip_locations = geolocate_ips(df["ip"].unique())
-    world_map = create_world_map(ip_locations)
+    # Create world map
+    world_map = create_world_map(df)
+    map_html = world_map._repr_html_() if world_map else ""
 
-    return {
-        "time_plot": time_plot,
-        "username_plot": username_plot,
-        "world_map": world_map,
-    }
+    return hourly_chart_html, map_html
 
 
 def generate_report(df):
-    """Generate a comprehensive report of the analysis"""
+    """Generate a report from the analysis results"""
+    if df.empty:
+        return "No data to analyze."
+
+    # Calculate basic statistics
     total_attempts = len(df)
-    unique_ips = df["ip"].nunique()
-    unique_usernames = df["username"].nunique()
-    time_range = df["timestamp"].max() - df["timestamp"].min()
+    unique_ips = df['ip'].nunique()
+    unique_usernames = df['username'].nunique()
+    time_range = f"{df['timestamp'].min()} to {df['timestamp'].max()}"
 
-    visualizations = create_visualizations(df)
+    # Create report
+    report = []
+    report.append("AUTH.LOG SECURITY ANALYSIS REPORT")
+    report.append("=" * 35)
+    report.append("")
+    report.append(f"Total failed login attempts: {total_attempts}")
+    report.append(f"Unique IP addresses: {unique_ips}")
+    report.append(f"Unique usernames attempted: {unique_usernames}")
+    report.append(f"Time range: {time_range}")
+    report.append("")
 
-    return {
-        "stats": {
-            "total_attempts": total_attempts,
-            "unique_ips": unique_ips,
-            "unique_usernames": unique_usernames,
-            "time_range": time_range,
-        },
-        "visualizations": visualizations,
-    }
+    # Add top attacking IPs
+    report.append("Top attacking IP addresses:")
+    ip_counts = df['ip'].value_counts()
+    for ip, count in ip_counts.head(5).items():
+        report.append(f"- {ip}: {count} attempts")
+    report.append("")
+
+    # Add most attempted usernames
+    report.append("Most attempted usernames:")
+    username_counts = df['username'].value_counts()
+    for username, count in username_counts.head(5).items():
+        report.append(f"- {username}: {count} attempts")
+    report.append("")
+
+    # Add country statistics if available
+    if 'country' in df.columns:
+        report.append("Attacks by country:")
+        country_counts = df['country'].value_counts()
+        for country, count in country_counts.head(5).items():
+            report.append(f"- {country}: {count} attempts")
+
+    return "\n".join(report)
+
+
+def process_log_files(file_path):
+    """Process log files and return a DataFrame with analysis results"""
+    # Analyze the log file
+    results = analyze_auth_log(file_path)
+    if not results:
+        return None
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(results)
+    
+    # Add hourly counts
+    df['hour'] = df['timestamp'].dt.floor('H')
+    hourly_counts = df.groupby('hour').size().reset_index(name='count')
+    df = df.merge(hourly_counts, left_on='hour', right_on='hour', how='left')
+    
+    return df
 
 
 @flask_app.route("/")
@@ -210,50 +332,55 @@ def index():
 
 @flask_app.route("/upload", methods=["POST"])
 def upload_file():
+    """Handle file upload and process the log file"""
     if "file" not in request.files:
-        flash("No file part", "danger")
-        return render_template("index.html"), 400
+        flash("No file selected", "error")
+        return redirect(url_for("index"))
 
     file = request.files["file"]
     if file.filename == "":
-        flash("No selected file", "danger")
-        return render_template("index.html"), 400
+        flash("No file selected", "error")
+        return redirect(url_for("index"))
 
-    if not file or not allowed_file(file.filename):
-        flash("Invalid file type", "danger")
-        return render_template("index.html"), 400
+    if not file or not file.stream.read():
+        flash("File is empty", "error")
+        return "File is empty", 400
 
-    # Save file temporarily
-    filename = secure_filename(file.filename)
-    temp_path = os.path.join(flask_app.config["UPLOAD_FOLDER"], filename)
-    file.save(temp_path)
+    # Reset file pointer after reading
+    file.stream.seek(0)
+
+    if not allowed_file(file.filename):
+        flash("Invalid file type. Please upload a .log or .log.gz file.", "error")
+        return redirect(url_for("index"))
 
     try:
         # Process the log file
-        results = analyze_auth_log(temp_path)
-        if not results:
+        df = process_log_files(file)
+        if df is None or df.empty:
             flash("No failed login attempts found in the file", "warning")
-            return render_template("index.html")
+            return redirect(url_for("index"))
 
-        # Convert results to DataFrame
-        df = pd.DataFrame(results)
+        # Geolocate IP addresses
+        df = geolocate_ips(df)
 
-        # Generate report with visualizations
+        # Create visualizations
+        hourly_chart, world_map = create_visualizations(df)
+
+        # Generate report
         report = generate_report(df)
 
-        # Store results in session
-        session["analysis_results"] = df.to_dict("records")
-
+        # Render template with results
         return render_template(
-            "results.html", results=df.to_dict("records"), report=report
+            "results.html",
+            report=report,
+            hourly_chart=hourly_chart,
+            world_map=world_map
         )
+
     except Exception as e:
-        flash(f"Error processing file: {str(e)}", "danger")
-        return render_template("index.html")
-    finally:
-        # Clean up temporary file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        flask_app.logger.error(f"Error processing file: {str(e)}")
+        flash(f"Error processing file: {str(e)}", "error")
+        return redirect(url_for("index"))
 
 
 if __name__ == "__main__":
