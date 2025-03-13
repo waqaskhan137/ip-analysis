@@ -6,3 +6,4 @@ geoip2==4.8.0
 folium==0.15.1
 python-dotenv==1.0.1
 waitress==3.0.2
+plotly==5.19.0
